@@ -2,7 +2,10 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   toxicityThreshold: 0.7,
   maxComments: 50,
-  backendUrl: "http://localhost:8787"
+  backendUrl: "http://localhost:8787",
+  llmBaseUrl: "",
+  llmModel: "",
+  llmApiKey: ""
 };
 
 chrome.runtime.onInstalled.addListener(() => {

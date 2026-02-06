@@ -2,7 +2,10 @@ const DEFAULT_SETTINGS = {
   enabled: true,
   toxicityThreshold: 0.7,
   maxComments: 50,
-  backendUrl: "http://localhost:8787"
+  backendUrl: "http://localhost:8787",
+  llmBaseUrl: "",
+  llmModel: "",
+  llmApiKey: ""
 };
 
 const POSITIVE_HINTS = ["great", "love", "awesome", "thanks", "thank you", "nice", "cool"];
@@ -139,7 +142,13 @@ async function analyzeComment(commentEl) {
     const response = await fetch(`${settings.backendUrl}/analyze`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: state.originalText, rewrite: false })
+      body: JSON.stringify({
+        text: state.originalText,
+        threshold: settings.toxicityThreshold,
+        llmBaseUrl: settings.llmBaseUrl,
+        llmModel: settings.llmModel,
+        llmApiKey: settings.llmApiKey
+      })
     });
     const payload = await response.json();
 
@@ -148,6 +157,7 @@ async function analyzeComment(commentEl) {
     }
 
     const toxicity = Number(payload.toxicity ?? 0);
+    state.rewrittenText = payload.rewrittenText || "";
     if (toxicity >= settings.toxicityThreshold) {
       state.status = "toxic";
       textNode.classList.add("diplomat-blur");
@@ -169,7 +179,7 @@ async function analyzeComment(commentEl) {
   }
 }
 
-async function rewriteComment(commentEl) {
+function rewriteComment(commentEl) {
   const state = commentState.get(commentEl);
   if (!state || state.status === "rewritten") return;
   const textNode = getCommentTextNode(commentEl);
@@ -178,34 +188,18 @@ async function rewriteComment(commentEl) {
   const button = commentEl.querySelector(".diplomat-action");
   if (button) {
     button.disabled = true;
-    button.textContent = "Rewriting...";
+    button.textContent = "Showing rewrite...";
   }
 
-  try {
-    const response = await fetch(`${settings.backendUrl}/analyze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: state.originalText, rewrite: true })
-    });
-    const payload = await response.json();
-    if (!response.ok) {
-      throw new Error(payload?.error || "Rewrite failed");
-    }
-
-    const rewrittenText = payload.rewrittenText || "Non-constructive criticism.";
-    state.rewrittenText = rewrittenText;
-    state.status = "rewritten";
-    textNode.textContent = rewrittenText;
-    textNode.classList.remove("diplomat-blur");
-    createBadge(commentEl, "rewritten");
-    if (button) {
-      button.textContent = "Constructive version shown";
-    }
-  } catch (error) {
-    if (button) {
-      button.textContent = "Try again";
-      button.disabled = false;
-    }
+  const rewrittenText =
+    state.rewrittenText?.trim() || "Non-constructive criticism.";
+  state.rewrittenText = rewrittenText;
+  state.status = "rewritten";
+  textNode.textContent = rewrittenText;
+  textNode.classList.remove("diplomat-blur");
+  createBadge(commentEl, "rewritten");
+  if (button) {
+    button.textContent = "Constructive version shown";
   }
 }
 
