@@ -45,7 +45,8 @@ function createBadge(commentEl, type) {
     neutral: "🛠 Neutral",
     rewritten: "✨ Rewritten",
     toxic: "⚠ Aggressive",
-    error: "⚠ Error"
+    error: "⚠ Error",
+    unconfigured: "⚙ Configure"
   };
   badge.textContent = labelMap[type] || "🛠 Neutral";
 }
@@ -96,6 +97,13 @@ function shouldSkipComment(text) {
 function enqueueComment(commentEl) {
   if (!settings.enabled) return;
   if (commentState.has(commentEl)) return;
+
+  if (!settings.llmBaseUrl || !settings.llmModel) {
+    const text = getCommentTextNode(commentEl)?.textContent?.trim() || "";
+    commentState.set(commentEl, { originalText: text, rewrittenText: "", status: "unconfigured" });
+    createBadge(commentEl, "unconfigured");
+    return;
+  }
 
   const textNode = getCommentTextNode(commentEl);
   if (!textNode) return;

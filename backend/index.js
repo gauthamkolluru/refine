@@ -141,6 +141,19 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+if (!DEFAULT_LLM_BASE_URL) {
+  console.warn(
+    "[Diplomat] WARNING: LLM_BASE_URL is not set. " +
+    "Requests must include llmBaseUrl in the body, or they will fail."
+  );
+}
+if (!DEFAULT_LLM_MODEL) {
+  console.warn(
+    "[Diplomat] WARNING: LLM_MODEL is not set. " +
+    "Requests must include llmModel in the body, or they will fail."
+  );
+}
+
 server.listen(PORT, () => {
   console.log(`Diplomat backend running on http://localhost:${PORT}`);
 });

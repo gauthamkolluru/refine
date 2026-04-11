@@ -55,6 +55,11 @@
   color: #a21414;
 }
 
+.diplomat-badge[data-badge-type="unconfigured"] {
+  background: #e8f0fe;
+  color: #1a73e8;
+}
+
 .diplomat-action {
   margin-top: 8px;
   padding: 6px 10px;
