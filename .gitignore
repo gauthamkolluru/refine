@@ -1,0 +1,13 @@
+# Monorepo / local agent & AI guidance (not committed — workspace-local)
+ENGINEERING_GUIDELINES_VERBATIM.md
+CLAUDE.md
+AGENTS.md
+agents.md
+.cursor/rules/
+.cursor/skills/
+
+# Test harness (ephemeral; not committed)
+test-harness/node_modules/
+test-harness/results/
+test-harness/.user-data/
+test-harness/.user-data-visible/

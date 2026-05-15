@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Fake YouTube comments page</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 720px; margin: 24px auto; }
+      ytd-comment-thread-renderer {
+        display: block;
+        padding: 12px 0;
+        border-bottom: 1px solid #eee;
+      }
+      #header-author { font-weight: 600; }
+      #content-text { display: block; margin-top: 4px; }
+    </style>
+  </head>
+  <body>
+    <h1>Fake YouTube watch page</h1>
+
+    <div id="comments">
+      <ytd-comment-thread-renderer id="c-short-positive">
+        <div id="header-author">@alice</div>
+        <div id="content-text">love it</div>
+      </ytd-comment-thread-renderer>
+
+      <ytd-comment-thread-renderer id="c-short-neutral">
+        <div id="header-author">@bob</div>
+        <div id="content-text">meh</div>
+      </ytd-comment-thread-renderer>
+
+      <ytd-comment-thread-renderer id="c-long-clean">
+        <div id="header-author">@carol</div>
+        <div id="content-text">This was a thoughtful breakdown of the topic and I appreciated the citations.</div>
+      </ytd-comment-thread-renderer>
+
+      <ytd-comment-thread-renderer id="c-long-toxic">
+        <div id="header-author">@dave</div>
+        <div id="content-text">This is the worst video I have ever seen, you are an idiot and should shut up about this topic forever.</div>
+      </ytd-comment-thread-renderer>
+    </div>
+  </body>
+</html>

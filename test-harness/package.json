@@ -1,0 +1,12 @@
+{
+  "name": "diplomat-test-harness",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Ephemeral end-to-end test harness for the Diplomat Comments extension.",
+  "scripts": {
+    "test": "node run-e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
+  }
+}

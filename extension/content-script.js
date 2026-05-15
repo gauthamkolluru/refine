@@ -139,23 +139,27 @@ async function analyzeComment(commentEl) {
 
   inFlight += 1;
   try {
-    const response = await fetch(`${settings.backendUrl}/analyze`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    // Route the fetch through the service worker (background.js). A direct
+    // fetch from the content-script runs as https://www.youtube.com → loopback
+    // which Chrome's Local Network Access blocks; the service worker is in the
+    // extension's privileged context and is not subject to that check.
+    const result = await chrome.runtime.sendMessage({
+      type: "analyze",
+      backendUrl: settings.backendUrl,
+      payload: {
         text: state.originalText,
         threshold: settings.toxicityThreshold,
         llmBaseUrl: settings.llmBaseUrl,
         llmModel: settings.llmModel,
         llmApiKey: settings.llmApiKey
-      })
+      }
     });
-    const payload = await response.json();
 
-    if (!response.ok) {
-      throw new Error(payload?.error || "Analysis failed");
+    if (!result?.ok) {
+      throw new Error(result?.error || "Analysis failed");
     }
 
+    const payload = result.body || {};
     const toxicity = Number(payload.toxicity ?? 0);
     state.rewrittenText = payload.rewrittenText || "";
     if (toxicity >= settings.toxicityThreshold) {

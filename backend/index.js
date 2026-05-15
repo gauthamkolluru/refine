@@ -106,10 +106,14 @@ async function analyzeAndRewrite({ text, threshold, llmConfig }) {
 
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
+    // Chrome 117+ enforces Private Network Access: fetches from a public
+    // origin (e.g. https://www.youtube.com) to a loopback address require
+    // the preflight to opt in with this header.
     res.writeHead(204, {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "POST, OPTIONS"
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Private-Network": "true"
     });
     res.end();
     return;
