@@ -34,6 +34,7 @@ Glossary / appendix for fast lookup. Keep entries terse. Update on every change
   - `processQueue()` / `analyzeComment(commentEl)` — bounded-concurrency drain. `analyzeComment` sends `{type: "analyze", backendUrl, payload}` to the service worker.
   - `rewriteComment(commentEl)` — swaps `#content-text` to rewritten text, sets `rewritten` badge.
   - `processExistingComments` / `setupObserver` / `injectToggle` / `waitForComments` — bootstrap.
+- **`extension/styles.css`** — `#diplomat-toggle`, `.diplomat-toggle-label`, `.diplomat-badge[data-badge-type=...]` (per-status colors), `.diplomat-action`, `.diplomat-blur`. Critically: `html[data-diplomat-enabled="false"] .diplomat-badge, .diplomat-action { display: none }` — that's how the "off" state hides UI without recomputing per-comment state.
 
 ### `backend/` — local Node HTTP proxy (no deps; built-ins only)
 
@@ -52,7 +53,9 @@ Glossary / appendix for fast lookup. Keep entries terse. Update on every change
 ### `test-harness/` — ephemeral E2E (not committed: `node_modules/`, `.user-data*/`, `results/`)
 
 - **`test-harness/package.json`** — Playwright devDep only; `npm test` → `node run-e2e.mjs`.
-- **`test-harness/mock-llm.js`** — OpenAI-compatible Chat Completions stub on `MOCK_LLM_PORT` (default `1234`). Keyword-based classifier (`TOXIC_KEYWORDS`) returns deterministic `{toxicity, rewrittenText}` JSON inside the assistant message.
+- **`test-harness/mock-llm.js`** — OpenAI-compatible Chat Completions stub on `MOCK_LLM_PORT` (default `1234`).
+  - `TOXIC_KEYWORDS` — words that flip a comment to `toxicity: 0.95`. Anything else returns `0.15`. Edit here if you need different test cases.
+  - `classify(userPrompt)` — pulls the comment out of the prompt and returns `{toxicity, rewrittenText}`.
 - **`test-harness/fixtures/youtube-fake.html`** — minimal DOM (`#comments` + four `ytd-comment-thread-renderer` cases: short-positive, short-neutral, long-clean, long-toxic) mimicking what `content-script.js` selects.
 - **`test-harness/setup.mjs`** — shared scaffolding (no asserts, no UI):
   - clears `PLAYWRIGHT_BROWSERS_PATH` (Cursor sandbox cache); dynamic-imports `playwright`.
