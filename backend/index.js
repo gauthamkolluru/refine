@@ -1,4 +1,5 @@
 const http = require("http");
+const log = require("./log");
 
 const PORT = Number(process.env.PORT || 8787);
 const DEFAULT_LLM_BASE_URL = process.env.LLM_BASE_URL;
@@ -10,40 +11,43 @@ const SYSTEM_PROMPT =
   "the comment to preserve the original feedback while removing insults, " +
   "profanity, and aggressive tone.";
 
+// Permissive CORS suits a local dev tool. Chrome 117+ also enforces Private
+// Network Access for public-origin → loopback calls; `Allow-Private-Network`
+// on the preflight is what lets the extension's service worker reach us.
+const BASE_CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "Content-Type"
+};
+const PREFLIGHT_CORS = {
+  ...BASE_CORS,
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Private-Network": "true"
+};
+
 function sendJson(res, statusCode, payload) {
-  const body = JSON.stringify(payload);
-  res.writeHead(statusCode, {
-    "Content-Type": "application/json",
-    "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Headers": "Content-Type"
-  });
-  res.end(body);
+  res.writeHead(statusCode, { ...BASE_CORS, "Content-Type": "application/json" });
+  res.end(JSON.stringify(payload));
 }
 
 async function readJson(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
   const text = Buffer.concat(chunks).toString("utf8");
-  if (!text) return {};
-  return JSON.parse(text);
+  return text ? JSON.parse(text) : {};
 }
 
 function normalizeBaseUrl(baseUrl) {
   return String(baseUrl || "").trim().replace(/\/+$/, "");
 }
 
+// LLMs sometimes wrap JSON in code fences or prose; pull out the first {...}.
 function parseJsonFromContent(content) {
   if (!content) throw new Error("Empty LLM response");
   const trimmed = content.trim();
-  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-    return JSON.parse(trimmed);
-  }
-  const firstBrace = trimmed.indexOf("{");
-  const lastBrace = trimmed.lastIndexOf("}");
-  if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) {
-    throw new Error("LLM response was not valid JSON");
-  }
-  return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1));
+  const start = trimmed.indexOf("{");
+  const end = trimmed.lastIndexOf("}");
+  if (start === -1 || end <= start) throw new Error("LLM response was not valid JSON");
+  return JSON.parse(trimmed.slice(start, end + 1));
 }
 
 async function analyzeAndRewrite({ text, threshold, llmConfig }) {
@@ -51,12 +55,8 @@ async function analyzeAndRewrite({ text, threshold, llmConfig }) {
   const model = llmConfig?.model || DEFAULT_LLM_MODEL;
   const apiKey = llmConfig?.apiKey || DEFAULT_LLM_API_KEY;
 
-  if (!baseUrl) {
-    throw new Error("Missing LLM_BASE_URL");
-  }
-  if (!model) {
-    throw new Error("Missing LLM_MODEL");
-  }
+  if (!baseUrl) throw new Error("Missing LLM_BASE_URL");
+  if (!model) throw new Error("Missing LLM_MODEL");
 
   const userPrompt =
     `Comment: ${text}\n` +
@@ -68,9 +68,7 @@ async function analyzeAndRewrite({ text, threshold, llmConfig }) {
     '"Non-constructive criticism."';
 
   const headers = { "Content-Type": "application/json" };
-  if (apiKey) {
-    headers.Authorization = `Bearer ${apiKey}`;
-  }
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
 
   const response = await fetch(`${baseUrl}/chat/completions`, {
     method: "POST",
@@ -87,34 +85,39 @@ async function analyzeAndRewrite({ text, threshold, llmConfig }) {
 
   const payload = await response.json();
   if (!response.ok) {
-    const errorMessage =
-      payload?.error?.message || "LLM request failed";
-    throw new Error(errorMessage);
+    throw new Error(payload?.error?.message || "LLM request failed");
   }
 
   const content = payload?.choices?.[0]?.message?.content || "";
   const parsed = parseJsonFromContent(content);
   const toxicity = Number(parsed?.toxicity);
   const rewrittenText = String(parsed?.rewrittenText || "").trim();
-
-  if (Number.isNaN(toxicity)) {
-    throw new Error("LLM response missing toxicity score");
-  }
+  if (Number.isNaN(toxicity)) throw new Error("LLM response missing toxicity score");
 
   return { toxicity, rewrittenText };
 }
 
+async function handleAnalyze(req, res) {
+  const body = await readJson(req);
+  const text = String(body.text || "").trim();
+  if (!text) {
+    sendJson(res, 400, { error: "Missing text" });
+    return;
+  }
+  const threshold = Number(body.threshold ?? 0.7);
+  const llmConfig = {
+    baseUrl: body.llmBaseUrl,
+    model: body.llmModel,
+    apiKey: body.llmApiKey
+  };
+  const result = await analyzeAndRewrite({ text, threshold, llmConfig });
+  log.info("analyze ok", { textLength: text.length, toxicity: result.toxicity });
+  sendJson(res, 200, result);
+}
+
 const server = http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") {
-    // Chrome 117+ enforces Private Network Access: fetches from a public
-    // origin (e.g. https://www.youtube.com) to a loopback address require
-    // the preflight to opt in with this header.
-    res.writeHead(204, {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers": "Content-Type",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Private-Network": "true"
-    });
+    res.writeHead(204, PREFLIGHT_CORS);
     res.end();
     return;
   }
@@ -125,26 +128,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const body = await readJson(req);
-    const text = String(body.text || "").trim();
-    if (!text) {
-      sendJson(res, 400, { error: "Missing text" });
-      return;
-    }
-    const threshold = Number(body.threshold ?? 0.7);
-    const llmConfig = {
-      baseUrl: body.llmBaseUrl,
-      model: body.llmModel,
-      apiKey: body.llmApiKey
-    };
-
-    const result = await analyzeAndRewrite({ text, threshold, llmConfig });
-    sendJson(res, 200, result);
+    await handleAnalyze(req, res);
   } catch (error) {
+    log.error("analyze failed", { error: error?.message });
     sendJson(res, 500, { error: error.message || "Server error" });
   }
 });
 
 server.listen(PORT, () => {
-  console.log(`Diplomat backend running on http://localhost:${PORT}`);
+  log.info("backend listening", { port: PORT });
 });

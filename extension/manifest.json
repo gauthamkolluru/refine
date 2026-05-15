@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.youtube.com/*"],
-      "js": ["content-script.js"],
+      "js": ["shared/constants.js", "shared/log.js", "content-script.js"],
       "css": ["styles.css"],
       "run_at": "document_idle"
     }

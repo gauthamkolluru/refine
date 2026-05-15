@@ -5,78 +5,72 @@ Glossary / appendix for fast lookup. Keep entries terse. Update on every change
 
 ## Entry points
 
-- **Extension service worker** — `extension/background.js:11` (`chrome.runtime.onInstalled`) primes `chrome.storage.sync` with `DEFAULT_SETTINGS`.
-- **Extension content script** — `extension/content-script.js:293` IIFE-ish bottom block: sends `getSettings`, hydrates `settings`, then `waitForComments()`.
-- **Backend HTTP server** — `backend/index.js:107` `http.createServer` → listens on `PORT` (default `8787`).
-- **Test harness runner** — `test-harness/run-e2e.mjs:62` `main()` orchestrates mock-LLM, backend, Chromium-with-extension.
+- **Extension service worker** — `extension/background.js:1` (`importScripts` shared module, then registers `onInstalled` + `onMessage` handlers).
+- **Extension content script** — `extension/content-script.js` (consumes `globalThis.DIPLOMAT`; bottom block sends `getSettings`, hydrates `settings`, calls `waitForComments()`).
+- **Backend HTTP server** — `backend/index.js` (`http.createServer` → listens on `PORT`, default `8787`).
+- **Test harness — headless** — `test-harness/run-e2e.mjs` (`main()`).
+- **Test harness — visible** — `test-harness/run-visible.mjs` (`main()`).
 
 ## Modules
 
 ### `extension/` — MV3 extension (no build step)
 
-- **`extension/manifest.json`** — MV3 manifest. Permissions: `storage`. Hosts: `https://www.youtube.com/*`, `http://localhost/*`, `http://127.0.0.1/*` (loopback entries are required for the service worker proxy fetch to the backend — see `background.js` `analyze` handler). Registers `background.js` service worker and injects `content-script.js` + `styles.css` at `document_idle`.
-- **`extension/background.js`** — settings store + message router + `/analyze` proxy.
-  - `DEFAULT_SETTINGS` *(const, L1)* — single source of truth for default config (`enabled`, `toxicityThreshold`, `maxComments`, `backendUrl`, `llmBaseUrl`, `llmModel`, `llmApiKey`). Duplicated in `content-script.js` (see DRY note below).
-  - `chrome.runtime.onInstalled` *(L11)* — backfills missing keys in `chrome.storage.sync`.
-  - `chrome.runtime.onMessage` *(L17)* — message router.
-    - `type: "getSettings"` → returns merged storage settings.
-    - `type: "setEnabled"` → persists `enabled` flag.
-    - `type: "analyze"` → proxies `POST ${backendUrl}/analyze` from the extension's privileged context (sidesteps Chrome LNA on the content-script side). Returns `{ ok, body }` or `{ ok: false, error }`.
-- **`extension/content-script.js`** — all on-page UI + analysis-driving logic.
-  - `DEFAULT_SETTINGS` *(L1)* — local copy; merged with response from service worker.
-  - `POSITIVE_HINTS`, `MIN_COMMENT_LENGTH`, `MAX_CONCURRENCY` *(L11-13)* — skip / queue heuristics.
-  - `commentState: WeakMap<HTMLElement, {originalText, rewrittenText, status}>` *(L20)* — per-comment state machine: `pending → toxic | positive | neutral | rewritten | error`.
-  - `getCommentTextNode(commentEl)` *(L22)* — resolves `#content-text` inside a `ytd-comment-thread-renderer`.
-  - `hasPositiveHint(text)` *(L26)* — true if text contains any `POSITIVE_HINTS` word.
-  - `createBadge(commentEl, type)` *(L31)* — idempotent badge attached to `#header-author`. `type ∈ {positive, neutral, rewritten, toxic, error}`.
-  - `ensureActionButton(commentEl, onClick)` *(L53)* — idempotent "View constructive version" button.
-  - `applyEnabledState(enabled)` *(L66)* — flips `document.documentElement.dataset.diplomatEnabled`; restores original text when disabled.
-  - `shouldSkipComment(text)` *(L90)* — skip heuristic (too short, or short + positive hint).
-  - `enqueueComment(commentEl)` *(L96)* — classifies short comments locally; queues the rest.
-  - `processQueue()` *(L126)* — drains queue up to `MAX_CONCURRENCY`.
-  - `analyzeComment(commentEl)` *(L134)* — sends `{type: "analyze", backendUrl, payload}` via `chrome.runtime.sendMessage` to the service worker, which performs the actual `POST ${backendUrl}/analyze`. Mutates state + DOM with the verdict.
-  - `rewriteComment(commentEl)` *(L182)* — swaps `#content-text` to `state.rewrittenText`, sets `rewritten` badge.
-  - `processExistingComments(limit)` *(L206)* — initial pass over `ytd-comment-thread-renderer` nodes.
-  - `setupObserver()` *(L213)* — `MutationObserver` on `#comments` for lazy-loaded comments.
-  - `injectToggle()` *(L242)* — prepends `#diplomat-toggle` inside `#comments`; click toggles `enabled` via `setEnabled` message.
-  - `waitForComments()` *(L279)* — rAF poll until `#comments` exists, then `injectToggle + setupObserver + processExistingComments`.
-- **`extension/styles.css`** — `#diplomat-toggle`, `.diplomat-toggle-label`, `.diplomat-badge[data-badge-type=...]`, `.diplomat-action`, `.diplomat-blur`, and global hide via `html[data-diplomat-enabled="false"]`.
+- **`extension/manifest.json`** — MV3 manifest. Permissions: `storage`. Hosts: `https://www.youtube.com/*`, `http://localhost/*`, `http://127.0.0.1/*` (loopback entries let the service worker proxy fetches to the backend). Content scripts load `shared/constants.js` + `shared/log.js` before `content-script.js` so the script gets `globalThis.DIPLOMAT` for free.
+- **`extension/shared/constants.js`** — single source of truth for `DIPLOMAT.DEFAULT_SETTINGS` (`enabled`, `toxicityThreshold`, `maxComments`, `backendUrl`, `llmBaseUrl`, `llmModel`, `llmApiKey`). Shared via `importScripts` in the service worker and via the `content_scripts.js` array in the content script.
+- **`extension/shared/log.js`** — `DIPLOMAT.log = { info, warn, error }`. One-line `[diplomat:level]` console output with optional structured context. Used by both `background.js` and `content-script.js`.
+- **`extension/background.js`** — settings store + message router + `/analyze` proxy. Single `handlers` map keyed by `message.type`:
+  - `getSettings` — returns merged storage settings.
+  - `setEnabled` — persists `enabled` flag.
+  - `analyze` — proxies `POST ${backendUrl}/analyze` from the extension's privileged context (sidesteps Chrome LNA). Returns `{ ok, body }` or `{ ok: false, error }`.
+- **`extension/content-script.js`** — on-page DOM + analysis driving.
+  - Constants — `POSITIVE_HINTS`, `MIN_COMMENT_LENGTH` (12), `SHORT_POSITIVE_LENGTH` (80), `MAX_CONCURRENCY` (2), `BADGE_LABELS`.
+  - State — `settings`, `queue`, `inFlight`, `observer`, `commentState: WeakMap`.
+  - `getCommentTextNode(commentEl)` / `hasPositiveHint(text)` — DOM/text helpers.
+  - `classifyShort(text)` — returns `"positive" | "neutral" | null`. `null` ⇒ caller must enqueue for backend analysis.
+  - `setBadge(commentEl, type)` — idempotent badge on `#header-author`. `type ∈ {positive, neutral, rewritten, toxic, error}`.
+  - `ensureActionButton(commentEl, onClick)` — idempotent "View constructive version" button.
+  - `applyEnabledState(enabled)` — flips `document.documentElement.dataset.diplomatEnabled`; restores original text when disabled.
+  - `enqueueComment(commentEl)` — short-circuits via `classifyShort` or enqueues for backend.
+  - `processQueue()` / `analyzeComment(commentEl)` — bounded-concurrency drain. `analyzeComment` sends `{type: "analyze", backendUrl, payload}` to the service worker.
+  - `rewriteComment(commentEl)` — swaps `#content-text` to rewritten text, sets `rewritten` badge.
+  - `processExistingComments` / `setupObserver` / `injectToggle` / `waitForComments` — bootstrap.
 
 ### `backend/` — local Node HTTP proxy (no deps; built-ins only)
 
+- **`backend/log.js`** — `{ info, warn, error }`. Emits one JSON object per line (ISO `ts`, `level`, `message`, ...context). `error` goes to stderr, everything else to stdout. Never call with secret material; pass metadata (lengths, IDs) only.
 - **`backend/index.js`**
-  - `PORT`, `DEFAULT_LLM_*` *(L3-6)* — env fallbacks; request body wins over env (see `analyzeAndRewrite`).
-  - `SYSTEM_PROMPT` *(L8)* — diplomat-editor persona for the LLM.
-  - `sendJson(res, status, payload)` *(L13)* — JSON response with permissive CORS.
-  - `readJson(req)` *(L23)* — async-iterates body chunks.
-  - `normalizeBaseUrl(baseUrl)` *(L31)* — trim + strip trailing slashes.
-  - `parseJsonFromContent(content)` *(L35)* — tolerant JSON extractor for LLM output (handles fenced / wrapped JSON).
-  - `analyzeAndRewrite({text, threshold, llmConfig})` *(L49)* — calls `${baseUrl}/chat/completions` with system + user prompt; expects `{toxicity, rewrittenText}` JSON in the assistant message.
-  - HTTP server *(L107)* — CORS preflight on `OPTIONS` (includes `Access-Control-Allow-Private-Network: true` for Chrome 117+ PNA); only route is `POST /analyze`; 404 otherwise.
+  - `PORT`, `DEFAULT_LLM_*` — env fallbacks; request-body values win over env.
+  - `SYSTEM_PROMPT` — diplomat-editor persona for the LLM.
+  - `BASE_CORS` / `PREFLIGHT_CORS` — single source of truth for CORS headers. `PREFLIGHT_CORS` adds `Access-Control-Allow-Methods` and `Access-Control-Allow-Private-Network: true` (Chrome 117+ PNA).
+  - `sendJson(res, status, payload)` — JSON response with `BASE_CORS`.
+  - `readJson(req)` — async-iterates body chunks.
+  - `normalizeBaseUrl(baseUrl)` / `parseJsonFromContent(content)` — small helpers.
+  - `analyzeAndRewrite({text, threshold, llmConfig})` — calls `${baseUrl}/chat/completions`; expects `{toxicity, rewrittenText}` JSON in the assistant message.
+  - `handleAnalyze(req, res)` — body parsing + 400 on missing text + happy path.
+  - HTTP server — `OPTIONS` returns `PREFLIGHT_CORS`; `POST /analyze` → `handleAnalyze`; 404 otherwise. Errors logged via `log.error`.
 
-### `test-harness/` — ephemeral E2E (not committed)
+### `test-harness/` — ephemeral E2E (not committed: `node_modules/`, `.user-data*/`, `results/`)
 
 - **`test-harness/package.json`** — Playwright devDep only; `npm test` → `node run-e2e.mjs`.
 - **`test-harness/mock-llm.js`** — OpenAI-compatible Chat Completions stub on `MOCK_LLM_PORT` (default `1234`). Keyword-based classifier (`TOXIC_KEYWORDS`) returns deterministic `{toxicity, rewrittenText}` JSON inside the assistant message.
 - **`test-harness/fixtures/youtube-fake.html`** — minimal DOM (`#comments` + four `ytd-comment-thread-renderer` cases: short-positive, short-neutral, long-clean, long-toxic) mimicking what `content-script.js` selects.
-- **`test-harness/run-visible.mjs`** — visible demo (Phase B). Same scaffold as `run-e2e.mjs` but `headless: false`, fewer asserts, deliberate pauses between classify → rewrite → toggle-off so a human can watch each state.
-- **`test-harness/run-e2e.mjs`** — headless orchestrator.
-  - clears `PLAYWRIGHT_BROWSERS_PATH` (set by Cursor sandbox) and dynamic-imports `playwright` so the locally-installed arm64 Chromium is used.
-  - hard timeout (`HARD_TIMEOUT_MS`, default 90s) + SIGKILL backstop on shutdown so a hung Chromium never burns time.
-  - boots `mock-llm.js` + `backend/index.js` as child processes.
-  - asserts backend ↔ mock LLM happy path AND that the backend preflight includes `Access-Control-Allow-Private-Network: true`.
-  - launches `chromium.launchPersistentContext` headless via `--headless=new` with `--load-extension=extension/` (no PNA/LNA feature flags — the extension proxies fetches through the service worker so the browser's LNA checks on the page no longer apply).
-  - seeds `chrome.storage.sync` via the extension's service worker.
-  - intercepts `https://www.youtube.com/**` via `page.route` to serve the fixture (manifest only injects on YouTube).
-  - asserts: toggle injected, positive / neutral / toxic / rewrite-on-click flows, toggle-off restoration.
-  - screenshots at three phases: `results/01-classified.png`, `results/02-rewritten.png`, `results/03-toggled-off.png`.
+- **`test-harness/setup.mjs`** — shared scaffolding (no asserts, no UI):
+  - clears `PLAYWRIGHT_BROWSERS_PATH` (Cursor sandbox cache); dynamic-imports `playwright`.
+  - `bootStack({mockLlmPort, backendPort})` — spawns mock LLM + real backend, waits for them, returns `{children, port, shutdown}`.
+  - `attachSignalHandlers(shutdown, { hardTimeoutMs })` — wires `exit`/`SIGINT`/`SIGTERM` and optional hard-timeout.
+  - `launchExtensionBrowser({userDataDir, headless, viewport})` — persistent-context Chromium with the unpacked extension loaded; `headless` toggles `--headless=new`.
+  - `getServiceWorker(context)` — returns the extension SW (immediate or via `waitForEvent`).
+  - `seedSettings(serviceWorker, settings)` — seeds `chrome.storage.sync` via the SW.
+  - `interceptYouTube(page)` — `page.route("https://www.youtube.com/**", ...)` serves the fixture HTML for `/watch`, 204s for everything else.
+- **`test-harness/run-e2e.mjs`** — headless orchestrator. Boots stack, sanity-probes backend, asserts PNA preflight contract, launches extension, intercepts YouTube, asserts toggle / classification / rewrite / toggle-off, captures three screenshots, prints summary.
+- **`test-harness/run-visible.mjs`** — visible demo. Same shared scaffold but `headless: false`, no asserts, deliberate pauses between classify → rewrite → toggle-off for a human watcher.
 
 ## Data flow
 
 ```
 YouTube page DOM
    │  (content-script.js)
-   ├── short-circuit heuristics (length / positive hints) → local badge
+   ├── classifyShort(text) → local "positive" | "neutral" badge
    └── chrome.runtime.sendMessage({type: "analyze", ...})
                             │
                             ▼
@@ -98,17 +92,17 @@ YouTube page DOM
 - **Run backend** — `LLM_BASE_URL=… LLM_MODEL=… node backend/index.js`
 - **Load extension** — `chrome://extensions` → Developer mode → Load unpacked → `extension/`
 - **Run E2E test** — `cd test-harness && npm install && npx playwright install chromium && node run-e2e.mjs`
+- **Run visible demo** — `cd test-harness && node run-visible.mjs`
 
-## Conventions / known constraints
+## Conventions
 
-- **DRY note**: `DEFAULT_SETTINGS` is duplicated between `extension/background.js:1` and `extension/content-script.js:1`. Keep them in sync until a shared module is introduced.
-- **Status vocabulary** (`commentState.status`): `pending`, `positive`, `neutral`, `toxic`, `rewritten`, `error`. Match in `createBadge` label map.
-- **Threshold** is 0–1, default `0.7`. Comments < `MIN_COMMENT_LENGTH` (12) or short + positive-hinted (< 80 chars) are not sent to the backend.
-- **CORS**: backend returns `Access-Control-Allow-Origin: *` so content-script fetches (origin = `youtube.com`) work.
+- **Single source of truth**: `DEFAULT_SETTINGS` lives in `extension/shared/constants.js`. CORS headers live in `BASE_CORS` / `PREFLIGHT_CORS` in `backend/index.js`. Test scaffolding lives in `test-harness/setup.mjs`.
+- **Status vocabulary** (`commentState.status`): `pending`, `positive`, `neutral`, `toxic`, `rewritten`, `error`. Matches keys in `BADGE_LABELS`.
+- **Threshold** is 0–1, default `0.7`. Comments < `MIN_COMMENT_LENGTH` (12) or short + positive-hinted (< `SHORT_POSITIVE_LENGTH` = 80) are not sent to the backend.
 - **Manifest scope**: content-script only loads on `https://www.youtube.com/*`. Test harness intercepts that origin instead of widening the manifest.
-- **Logging**: backend currently has only one `console.log` (boot). Per `agent-logging-standards.mdc`, structured logging should be introduced when the project grows beyond single-file modules; defer until an actual feature needs it (YAGNI).
+- **Logging**: backend uses `backend/log.js` (JSON per line). Extension uses `DIPLOMAT.log` (`[diplomat:level]` console). Never log secrets or full comment text — pass `textLength` / counts instead.
 
 ## Environment notes (test runs)
 
 - Cursor's macOS sandbox blocks Chromium's own sandbox; Playwright launches must run with `required_permissions: ["all"]` (outside the Cursor sandbox).
-- Cursor sets `PLAYWRIGHT_BROWSERS_PATH` to a sandbox-private cache that holds an x64 build. Outside the sandbox the machine is arm64; `run-e2e.mjs` clears that env var so Playwright resolves to `~/Library/Caches/ms-playwright/` (arm64 build installed via `npx playwright install chromium`).
+- Cursor sets `PLAYWRIGHT_BROWSERS_PATH` to a sandbox-private cache that holds an x64 build. Outside the sandbox the machine is arm64; `setup.mjs` clears that env var so Playwright resolves to `~/Library/Caches/ms-playwright/` (arm64 build installed via `npx playwright install chromium`).
